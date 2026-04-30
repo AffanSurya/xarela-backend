@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/AffanSurya/xarela-backend/internal/config"
 	"github.com/AffanSurya/xarela-backend/internal/handler"
@@ -31,7 +32,9 @@ func New(cfg config.Config, logger *slog.Logger) *Server {
 
 	authService := service.NewAuthService(cfg.DatabaseDSN)
 	authHandler := handler.NewAuthHandler(authService)
-	authHandler.Register(e.Group("/api/v1/auth"))
+	authGroup := e.Group("/api/v1/auth")
+	authGroup.Use(appmiddleware.RateLimit(5, time.Minute))
+	authHandler.Register(authGroup)
 
 	return &Server{
 		cfg:    cfg,

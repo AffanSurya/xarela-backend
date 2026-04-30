@@ -6,6 +6,8 @@ CREATE TABLE users (
     password_hash text NOT NULL,
     full_name text,
     is_email_verified boolean NOT NULL DEFAULT false,
+    email_verification_token_hash text,
+    email_verification_expires_at timestamptz,
     base_currency char(3) NOT NULL,
     timezone text,
     is_2fa_enabled boolean NOT NULL DEFAULT false,
