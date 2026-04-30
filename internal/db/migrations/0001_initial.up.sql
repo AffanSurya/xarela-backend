@@ -22,13 +22,16 @@ CREATE TABLE user_sessions (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     refresh_token_hash text NOT NULL,
+    access_token_hash text NOT NULL,
     ip_address text,
     user_agent text,
     device_id text,
+    access_token_expires_at timestamptz NOT NULL,
     expires_at timestamptz NOT NULL,
     revoked_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT user_sessions_refresh_token_hash_key UNIQUE (refresh_token_hash)
+    CONSTRAINT user_sessions_refresh_token_hash_key UNIQUE (refresh_token_hash),
+    CONSTRAINT user_sessions_access_token_hash_key UNIQUE (access_token_hash)
 );
 
 CREATE TABLE connected_accounts (
