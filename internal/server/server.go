@@ -29,6 +29,10 @@ func New(cfg config.Config, logger *slog.Logger) *Server {
 	healthHandler := handler.NewHealthHandler(healthService)
 	healthHandler.Register(e.Group(""))
 
+	authService := service.NewAuthService(cfg.DatabaseDSN)
+	authHandler := handler.NewAuthHandler(authService)
+	authHandler.Register(e.Group("/api/v1/auth"))
+
 	return &Server{
 		cfg:    cfg,
 		logger: logger,
