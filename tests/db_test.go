@@ -1,10 +1,14 @@
-package db
+package tests
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/AffanSurya/xarela-backend/internal/db"
+)
 
 func TestDefaultExpenseCategoriesAreUnique(t *testing.T) {
 	seen := make(map[string]struct{})
-	for _, category := range DefaultExpenseCategories() {
+	for _, category := range db.DefaultExpenseCategories() {
 		if category.Name == "" {
 			t.Fatal("category name must not be empty")
 		}
@@ -17,7 +21,7 @@ func TestDefaultExpenseCategoriesAreUnique(t *testing.T) {
 
 func TestSupportedBaseCurrenciesAreUnique(t *testing.T) {
 	seen := make(map[string]struct{})
-	for _, currency := range SupportedBaseCurrencies() {
+	for _, currency := range db.SupportedBaseCurrencies() {
 		if currency == "" {
 			t.Fatal("currency code must not be empty")
 		}
