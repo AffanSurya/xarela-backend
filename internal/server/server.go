@@ -8,6 +8,7 @@ import (
 	"github.com/AffanSurya/xarela-backend/internal/config"
 	"github.com/AffanSurya/xarela-backend/internal/handler"
 	appmiddleware "github.com/AffanSurya/xarela-backend/internal/middleware"
+	"github.com/AffanSurya/xarela-backend/internal/repository"
 	"github.com/AffanSurya/xarela-backend/internal/service"
 	"github.com/labstack/echo/v4"
 	echoMiddleware "github.com/labstack/echo/v4/middleware"
@@ -35,6 +36,12 @@ func New(cfg config.Config, logger *slog.Logger) *Server {
 	authGroup := e.Group("/api/v1/auth")
 	authGroup.Use(appmiddleware.RateLimit(5, time.Minute))
 	authHandler.Register(authGroup)
+
+	settingsService := service.NewUserSettingsService(repository.NewUserSettingsRepository(cfg.DatabaseDSN))
+	settingsHandler := handler.NewUserSettingsHandler(settingsService)
+	settingsGroup := e.Group("/api/v1/user")
+	settingsGroup.Use(appmiddleware.AccessTokenAuth(authService))
+	settingsHandler.Register(settingsGroup)
 
 	return &Server{
 		cfg:    cfg,

@@ -67,9 +67,11 @@ func (UserSession) Fields() []ent.Field {
 			Default(uuid.New),
 		field.UUID("user_id", uuid.UUID{}),
 		field.String("refresh_token_hash").NotEmpty(),
+		field.String("access_token_hash").NotEmpty(),
 		field.String("ip_address").Optional(),
 		field.Text("user_agent").Optional(),
 		field.String("device_id").Optional(),
+		field.Time("access_token_expires_at"),
 		field.Time("expires_at"),
 		field.Time("revoked_at").Optional(),
 		field.Time("created_at").Default(time.Now),
@@ -89,6 +91,7 @@ func (UserSession) Edges() []ent.Edge {
 func (UserSession) Indexes() []ent.Index {
 	return []ent.Index{
 		index.Fields("refresh_token_hash").Unique(),
+		index.Fields("access_token_hash").Unique(),
 		index.Fields("user_id", "expires_at"),
 	}
 }

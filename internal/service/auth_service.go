@@ -29,6 +29,7 @@ var (
 	ErrEmailAlreadyExists       = errors.New("email already exists")
 	ErrEmailVerificationInvalid = errors.New("email verification invalid or expired")
 	ErrEmailVerificationExpired = errors.New("email verification expired")
+	ErrAccessTokenInvalid       = errors.New("access token invalid or expired")
 	ErrInvalidCredentials       = errors.New("invalid credentials")
 	ErrRefreshTokenInvalid      = errors.New("refresh token invalid or expired")
 	ErrRefreshTokenReuse        = errors.New("refresh token reuse detected")
@@ -198,6 +199,46 @@ VALUES ($1, $2, $3, $4, false, $5, $6, $7)
 		},
 		Token: token,
 	}, nil
+}
+
+func (s AuthService) AuthenticateAccessToken(ctx context.Context, accessToken string) (AuthUser, error) {
+	if strings.TrimSpace(accessToken) == "" {
+		return AuthUser{}, ErrUnauthorized
+	}
+
+	database, err := sql.Open("postgres", s.dsn)
+	if err != nil {
+		return AuthUser{}, fmt.Errorf("open database: %w", err)
+	}
+	defer database.Close()
+
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	if err := database.PingContext(ctx); err != nil {
+		return AuthUser{}, fmt.Errorf("ping database: %w", err)
+	}
+
+	var user AuthUser
+	var fullName sql.NullString
+	accessTokenHash := hashAccessToken(accessToken)
+	err = database.QueryRowContext(ctx, `
+SELECT u.id, u.email, u.full_name, u.is_email_verified
+FROM user_sessions s
+JOIN users u ON u.id = s.user_id
+WHERE s.access_token_hash = $1
+  AND s.access_token_expires_at >= $2
+  AND s.revoked_at IS NULL
+`, accessTokenHash, s.now()).Scan(&user.ID, &user.Email, &fullName, &user.IsEmailVerified)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return AuthUser{}, ErrUnauthorized
+		}
+		return AuthUser{}, err
+	}
+
+	user.FullName = fullName.String
+	return user, nil
 }
 
 func (s AuthService) VerifyEmail(ctx context.Context, request VerifyEmailRequest) (VerifyEmailResult, error) {
@@ -471,11 +512,13 @@ func createSession(ctx context.Context, tx *sql.Tx, now time.Time, userID uuid.U
 	}
 
 	refreshExpiry := now.Add(refreshTokenTTL)
+	accessExpiry := now.Add(accessTokenTTL)
 	refreshHash := hashRefreshToken(refreshToken)
+	accessHash := hashAccessToken(accessToken)
 	_, err = tx.ExecContext(ctx, `
-INSERT INTO user_sessions (id, user_id, refresh_token_hash, expires_at, created_at)
-VALUES ($1, $2, $3, $4, $5)
-`, uuid.New(), userID, refreshHash, refreshExpiry, now)
+INSERT INTO user_sessions (id, user_id, refresh_token_hash, access_token_hash, access_token_expires_at, expires_at, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+`, uuid.New(), userID, refreshHash, accessHash, accessExpiry, refreshExpiry, now)
 	if err != nil {
 		return AuthTokenPair{}, fmt.Errorf("insert session: %w", err)
 	}
@@ -644,6 +687,10 @@ func generateToken(size int) (string, error) {
 func hashRefreshToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
+}
+
+func hashAccessToken(token string) string {
+	return hashRefreshToken(token)
 }
 
 func hashVerificationToken(token string) string {
