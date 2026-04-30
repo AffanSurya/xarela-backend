@@ -22,6 +22,8 @@ func (User) Fields() []ent.Field {
 		field.String("password_hash").NotEmpty(),
 		field.String("full_name").Optional(),
 		field.Bool("is_email_verified").Default(false),
+		field.String("email_verification_token_hash").Optional(),
+		field.Time("email_verification_expires_at").Optional(),
 		field.String("base_currency").MaxLen(3),
 		field.String("timezone").Optional(),
 		field.Bool("is_2fa_enabled").Default(false),

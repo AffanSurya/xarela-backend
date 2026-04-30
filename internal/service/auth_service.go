@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -21,21 +22,25 @@ const (
 	defaultBaseCurrency    = "IDR"
 	defaultAccessTokenTTL  = time.Hour
 	defaultRefreshTokenTTL = 30 * 24 * time.Hour
+	defaultVerificationTTL = 24 * time.Hour
 )
 
 var (
-	ErrEmailAlreadyExists  = errors.New("email already exists")
-	ErrInvalidCredentials  = errors.New("invalid credentials")
-	ErrRefreshTokenInvalid = errors.New("refresh token invalid or expired")
-	ErrRefreshTokenReuse   = errors.New("refresh token reuse detected")
-	ErrUnauthorized        = errors.New("unauthorized")
+	ErrEmailAlreadyExists       = errors.New("email already exists")
+	ErrEmailVerificationInvalid = errors.New("email verification invalid or expired")
+	ErrEmailVerificationExpired = errors.New("email verification expired")
+	ErrInvalidCredentials       = errors.New("invalid credentials")
+	ErrRefreshTokenInvalid      = errors.New("refresh token invalid or expired")
+	ErrRefreshTokenReuse        = errors.New("refresh token reuse detected")
+	ErrUnauthorized             = errors.New("unauthorized")
 )
 
 type AuthService struct {
-	dsn             string
-	accessTokenTTL  time.Duration
-	refreshTokenTTL time.Duration
-	now             func() time.Time
+	dsn                  string
+	accessTokenTTL       time.Duration
+	refreshTokenTTL      time.Duration
+	verificationTokenTTL time.Duration
+	now                  func() time.Time
 }
 
 type AuthUser struct {
@@ -72,6 +77,10 @@ type RefreshRequest struct {
 	RefreshToken string
 }
 
+type VerifyEmailRequest struct {
+	VerificationToken string
+}
+
 type RegisterResult struct {
 	User  AuthUser
 	Token AuthTokenPair
@@ -89,6 +98,10 @@ type LogoutResult struct {
 	Revoked bool `json:"revoked"`
 }
 
+type VerifyEmailResult struct {
+	Verified bool `json:"verified"`
+}
+
 type ValidationError struct {
 	Code    string            `json:"code"`
 	Message string            `json:"message"`
@@ -101,10 +114,11 @@ func (e *ValidationError) Error() string {
 
 func NewAuthService(dsn string) AuthService {
 	return AuthService{
-		dsn:             strings.TrimSpace(dsn),
-		accessTokenTTL:  defaultAccessTokenTTL,
-		refreshTokenTTL: defaultRefreshTokenTTL,
-		now:             time.Now,
+		dsn:                  strings.TrimSpace(dsn),
+		accessTokenTTL:       defaultAccessTokenTTL,
+		refreshTokenTTL:      defaultRefreshTokenTTL,
+		verificationTokenTTL: defaultVerificationTTL,
+		now:                  time.Now,
 	}
 }
 
@@ -150,11 +164,17 @@ func (s AuthService) Register(ctx context.Context, request RegisterRequest) (Reg
 		return RegisterResult{}, fmt.Errorf("hash password: %w", err)
 	}
 
+	verificationToken, err := generateToken(32)
+	if err != nil {
+		return RegisterResult{}, err
+	}
+	verificationExpiry := s.now().Add(s.verificationTokenTTL)
+
 	userID := uuid.New()
 	if _, err := tx.ExecContext(ctx, `
-INSERT INTO users (id, email, password_hash, full_name, is_email_verified, base_currency)
-VALUES ($1, $2, $3, $4, false, $5)
-`, userID, email, string(hash), strings.TrimSpace(request.FullName), defaultBaseCurrency); err != nil {
+INSERT INTO users (id, email, password_hash, full_name, is_email_verified, email_verification_token_hash, email_verification_expires_at, base_currency)
+VALUES ($1, $2, $3, $4, false, $5, $6, $7)
+`, userID, email, string(hash), strings.TrimSpace(request.FullName), hashVerificationToken(verificationToken), verificationExpiry, defaultBaseCurrency); err != nil {
 		return RegisterResult{}, fmt.Errorf("insert user: %w", err)
 	}
 
@@ -167,6 +187,8 @@ VALUES ($1, $2, $3, $4, false, $5)
 		return RegisterResult{}, fmt.Errorf("commit transaction: %w", err)
 	}
 
+	slog.InfoContext(ctx, "email verification token generated", "email", email, "token", verificationToken)
+
 	return RegisterResult{
 		User: AuthUser{
 			ID:              userID.String(),
@@ -176,6 +198,83 @@ VALUES ($1, $2, $3, $4, false, $5)
 		},
 		Token: token,
 	}, nil
+}
+
+func (s AuthService) VerifyEmail(ctx context.Context, request VerifyEmailRequest) (VerifyEmailResult, error) {
+	if validationErr := validateVerifyEmailRequest(request); validationErr != nil {
+		return VerifyEmailResult{}, validationErr
+	}
+
+	database, err := sql.Open("postgres", s.dsn)
+	if err != nil {
+		return VerifyEmailResult{}, fmt.Errorf("open database: %w", err)
+	}
+	defer database.Close()
+
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	if err := database.PingContext(ctx); err != nil {
+		return VerifyEmailResult{}, fmt.Errorf("ping database: %w", err)
+	}
+
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		return VerifyEmailResult{}, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	verificationTokenHash := hashVerificationToken(request.VerificationToken)
+	var (
+		userID    uuid.UUID
+		verified  bool
+		expiresAt time.Time
+	)
+	err = tx.QueryRowContext(ctx, `
+SELECT id, is_email_verified, email_verification_expires_at
+FROM users
+WHERE email_verification_token_hash = $1
+`, verificationTokenHash).Scan(&userID, &verified, &expiresAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return VerifyEmailResult{}, ErrEmailVerificationInvalid
+		}
+		return VerifyEmailResult{}, err
+	}
+
+	now := s.now()
+	if now.After(expiresAt) {
+		if _, err := tx.ExecContext(ctx, `
+UPDATE users
+SET email_verification_token_hash = NULL,
+    email_verification_expires_at = NULL
+WHERE id = $1
+`, userID); err != nil {
+			return VerifyEmailResult{}, fmt.Errorf("clear expired verification token: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return VerifyEmailResult{}, fmt.Errorf("commit transaction: %w", err)
+		}
+		return VerifyEmailResult{}, ErrEmailVerificationExpired
+	}
+
+	if !verified {
+		if _, err := tx.ExecContext(ctx, `
+UPDATE users
+SET is_email_verified = true,
+    email_verification_token_hash = NULL,
+    email_verification_expires_at = NULL
+WHERE id = $1
+`, userID); err != nil {
+			return VerifyEmailResult{}, fmt.Errorf("verify user: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return VerifyEmailResult{}, fmt.Errorf("commit transaction: %w", err)
+	}
+
+	return VerifyEmailResult{Verified: true}, nil
 }
 
 func (s AuthService) Login(ctx context.Context, request LoginRequest) (LoginResult, error) {
@@ -515,6 +614,13 @@ func validateRefreshRequest(request RefreshRequest) *ValidationError {
 	return nil
 }
 
+func validateVerifyEmailRequest(request VerifyEmailRequest) *ValidationError {
+	if strings.TrimSpace(request.VerificationToken) == "" {
+		return &ValidationError{Code: "validation_error", Message: "Invalid input", Fields: map[string]string{"verification_token": "required"}}
+	}
+	return nil
+}
+
 func looksLikeEmail(value string) bool {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" || strings.Contains(trimmed, " ") {
@@ -538,4 +644,8 @@ func generateToken(size int) (string, error) {
 func hashRefreshToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
+}
+
+func hashVerificationToken(token string) string {
+	return hashRefreshToken(token)
 }

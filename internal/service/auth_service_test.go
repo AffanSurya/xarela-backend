@@ -28,3 +28,13 @@ func TestHashRefreshTokenIsDeterministic(t *testing.T) {
 		t.Fatal("expected refresh token hash to be deterministic")
 	}
 }
+
+func TestValidateVerifyEmailRequest(t *testing.T) {
+	err := validateVerifyEmailRequest(VerifyEmailRequest{VerificationToken: ""})
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if err.Fields["verification_token"] != "required" {
+		t.Fatalf("expected verification token required error, got %#v", err.Fields)
+	}
+}

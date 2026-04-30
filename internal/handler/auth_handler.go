@@ -17,6 +17,7 @@ func NewAuthHandler(service service.AuthService) AuthHandler {
 
 func (h AuthHandler) Register(group *echo.Group) {
 	group.POST("/register", h.RegisterUser)
+	group.POST("/verify-email", h.VerifyEmail)
 	group.POST("/login", h.Login)
 	group.POST("/refresh", h.Refresh)
 	group.POST("/logout", h.Logout)
@@ -35,6 +36,10 @@ type loginRequest struct {
 
 type refreshRequest struct {
 	RefreshToken string `json:"refresh_token"`
+}
+
+type verifyEmailRequest struct {
+	VerificationToken string `json:"verification_token"`
 }
 
 func (h AuthHandler) RegisterUser(c echo.Context) error {
@@ -61,6 +66,20 @@ func (h AuthHandler) RegisterUser(c echo.Context) error {
 			"token_type":    result.Token.TokenType,
 		},
 	})
+}
+
+func (h AuthHandler) VerifyEmail(c echo.Context) error {
+	var request verifyEmailRequest
+	if err := c.Bind(&request); err != nil {
+		return c.JSON(http.StatusBadRequest, errorResponse("validation_error", "Invalid input", nil))
+	}
+
+	result, err := h.service.VerifyEmail(c.Request().Context(), service.VerifyEmailRequest{VerificationToken: request.VerificationToken})
+	if err != nil {
+		return authErrorResponse(c, err)
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{"data": result})
 }
 
 func (h AuthHandler) Login(c echo.Context) error {
@@ -136,6 +155,10 @@ func authErrorResponse(c echo.Context, err error) error {
 		return c.JSON(http.StatusUnauthorized, errorResponse("refresh_token_invalid", "Refresh token is invalid or expired", nil))
 	case service.ErrRefreshTokenReuse:
 		return c.JSON(http.StatusUnauthorized, errorResponse("refresh_token_reuse", "Refresh token reuse detected", nil))
+	case service.ErrEmailVerificationInvalid:
+		return c.JSON(http.StatusBadRequest, errorResponse("email_verification_invalid", "Verification token is invalid or expired", nil))
+	case service.ErrEmailVerificationExpired:
+		return c.JSON(http.StatusBadRequest, errorResponse("email_verification_expired", "Verification token has expired", nil))
 	case service.ErrUnauthorized:
 		return c.JSON(http.StatusUnauthorized, errorResponse("unauthorized", "Refresh token is missing or invalid", nil))
 	default:
