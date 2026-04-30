@@ -1,0 +1,17 @@
+DROP TABLE IF EXISTS audit_logs;
+DROP TABLE IF EXISTS sync_jobs;
+DROP TABLE IF EXISTS alerts;
+DROP TABLE IF EXISTS portfolio_snapshots;
+DROP TABLE IF EXISTS retirement_scenarios;
+DROP TABLE IF EXISTS retirement_plans;
+DROP TABLE IF EXISTS budgets;
+DROP TABLE IF EXISTS recurring_expenses;
+DROP TABLE IF EXISTS expenses;
+DROP TABLE IF EXISTS expense_categories;
+DROP TABLE IF EXISTS price_ticks;
+DROP TABLE IF EXISTS transactions;
+DROP TABLE IF EXISTS holdings;
+DROP TABLE IF EXISTS assets;
+DROP TABLE IF EXISTS connected_accounts;
+DROP TABLE IF EXISTS user_sessions;
+DROP TABLE IF EXISTS users;
