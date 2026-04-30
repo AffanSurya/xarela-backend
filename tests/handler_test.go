@@ -1,10 +1,11 @@
-package handler
+package tests
 
 import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/AffanSurya/xarela-backend/internal/handler"
 	"github.com/AffanSurya/xarela-backend/internal/service"
 	"github.com/labstack/echo/v4"
 )
@@ -15,9 +16,9 @@ func TestHealthHandlerReturnsOk(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	ctx := e.NewContext(req, recorder)
 
-	handler := NewHealthHandler(service.NewHealthService())
+	h := handler.NewHealthHandler(service.NewHealthService())
 
-	if err := handler.Get(ctx); err != nil {
+	if err := h.Get(ctx); err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
 
